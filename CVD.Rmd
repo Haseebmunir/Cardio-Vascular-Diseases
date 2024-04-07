@@ -1,0 +1,2099 @@
+---
+title: "Group Assignment STAT5003"
+author: "Moal9049"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+  code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+#Introduction Cardiovascular disease (CVD) is the leading cause of death
+around the world (WHO 2019). The World Health Organisation (WHO)
+estimated that CVD was accountable for 16% of the world's total number
+of deaths during 2019, with deaths increasing more than 20% from 2000
+(WHO 2019). The majority of individuals are usually diagnosed with a
+type of CVD after having common symptoms such as chest pain, heart
+attack or sudden cardiac arrest (CDC 2022). As a result, researchers and
+governments worldwide have been investing heavily in studying the
+leading indicators of CVD to reduce the death rate caused by such
+diseases. Epidemiological studies and randomized clinical trials have
+shown that CVD is largely preventable (Cooper et al., 2000). Therefore,
+it is important to identify individuals at risk of being diagnosed with
+a type of CVD at an early stage to prevent life-threatening outcomes.
+
+This study is concerned with a supervised binary classification problem
+to predict whether an individual should be diagnosed with CVD or not, by
+building prediction models based on the history of health risk factors
+of individuals.
+
+```{r setup, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages('ggdist')
+#install.packages("ROCR")
+#install.packages('car')
+#install.packages('sm')
+#install.packages("ROSE")
+#install.packages("Rtsne")
+#install.packages("performanceEstimation")
+#install.packages("rpart")
+#install.packages("Rborist")
+#install.packages("xgboost")
+# install.packages("rpart.plot") 
+# install.packages("mlr")
+# install.packages("nycflights13")
+# install.packages('plotly')
+# install.packages('finalfit')
+#install.packages("ggplot2")
+#install.packages("rlang")
+#install.packages("cvms")
+#install.packages("recipes")
+#install.packages("SHAPforxgboost") 
+library("SHAPforxgboost") #viusalise xgboost features
+library("cvms") #plot confusion matrix 
+library("recipes")
+library('ranger') #random forest 
+#library('finalfit') #visualise missing values 
+library(visdat) #visualise missing values
+library("mlr") #model investigation package
+library("rpart.plot")  # decision treep visualisation 
+library(boot) #glm cross-validation 
+library(xgboost) # for xgboost model
+library(Rborist)# for random forest model
+library(randomForest) # for random forest
+library(rpart)# for decision tree model
+library(performanceEstimation) #for smote
+library("dplyr") # for data preping 
+library(ggplot2) #for visualisations 
+library(ggdist) #for visualisations 
+library(corrplot) #for visualisations 
+library(caret) #stats and modeling package
+library(class)
+library(pROC)
+library(ROCR)
+library('Rtsne')
+library(MASS)
+library(car)
+library(sm)
+library(ROSE) #for over/under sampling
+library(gridExtra) #for visualisations 
+library(doParallel)
+library(plotly) #visualisation 
+library(naniar) #visaulise missing values 
+doParallel::registerDoParallel()
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
+
+
+```
+
+# Data Cleaning
+
+```{r Read dataset, warning = FALSE}
+dat <- read.csv("2015Trimmed.csv")
+```
+
+```{r clean dataset, warning = FALSE}
+## selected columns
+data <- dplyr::select(dat, 'X_MICHD',
+                    'X_RFHYPE5',  
+                    'TOLDHI2', 
+                   #'X_CRACE1', (Race) good indicator, but has over %50 NAs
+                    'X_CHOLCHK', 
+                    'X_BMI5', 
+                    'SMOKE100', 
+                    'CVDSTRK3', 
+                    'DIABETE3', 
+                    'X_TOTINDA', 
+                    'X_FRTLT1', 
+                    'X_VEGLT1', 
+                    'X_RFDRHV5', 
+                    'HLTHPLN1', 
+                    'MEDCOST', 
+                    'GENHLTH', 
+                    'MENTHLTH', 
+                    'PHYSHLTH', 
+                    'DIFFWALK', 
+                    'SEX', 
+                    'X_AGEG5YR', 
+                    'EDUCA', 
+                    'INCOME2')
+
+## 2.2 Modify and clean the values to be more suitable to ML algorithms
+
+# in this part we use the codebook to clean up the values 
+## link >https://www.cdc.gov/brfss/annual_data/2015/pdf/codebook15_llcp.pdf<
+
+#####################################
+
+## add factors for variables that are factors and clean up the factors
+
+## X_MICHD = Respondents that have ever reported having coronary heart disease (CHD) or myocardial infarction (MI) 
+## 1 = Reported having MI or CHD; 
+## 2 = Did not report having MI or CHD
+
+## update values (Did not report having MI or CHD = 0)
+data[!is.na(data$X_MICHD) & data$X_MICHD == 2,]$X_MICHD <- 0
+
+## drop all records with missing target varialbe 
+data <- data[!is.na(data$X_MICHD),]
+
+## change to factor 
+data$X_MICHD <- as.factor(data$X_MICHD)
+
+## rename column 
+data <- rename(data, HeartDiseaseorAttack = X_MICHD)
+
+## check 
+#table(data$HeartDiseaseorAttack, useNA = "always")
+
+#####################################
+
+## X_RFHYPE5 = Adults who have been told they have high blood pressure by a doctor, nurse, or other health professional 
+## 1 = No, 
+## 2 = Yes, 
+## 9 = Missing/not answered
+
+## update values 
+## 0 = No, 
+## 1 = Yes, 
+data[!is.na(data$X_RFHYPE5) & data$X_RFHYPE5 == 1,]$X_RFHYPE5 <- 0
+data[!is.na(data$X_RFHYPE5) & data$X_RFHYPE5 == 2,]$X_RFHYPE5 <- 1
+
+## drop not answered ie 9 
+data[!is.na(data$X_RFHYPE5) & data$X_RFHYPE5 == 9,]$X_RFHYPE5 <- NA
+
+## change to factor 
+data$X_RFHYPE5 <- as.factor(data$X_RFHYPE5)
+
+## rename column 
+data <- rename(data, HighBP = X_RFHYPE5)
+## check 
+#table(data$HighBP, useNA = "always")
+
+#####################################
+
+
+## TOLDHI2 = Adults who have been told they have high blood pressure by a doctor, nurse, or other health professional 
+## 1 = Yes, 
+## 2 = No, 
+## 7 = Don't know, 
+## 9 = Refused / missing, blank = not asked
+#table(data$TOLDHI2)
+
+## update value(s)
+## 0 = No, 
+## 1 = Yes, 
+data[!is.na(data$TOLDHI2) &data$TOLDHI2 == 2,]$TOLDHI2 <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$TOLDHI2) & data$TOLDHI2 %in% c(7,9),]$TOLDHI2 <- NA
+
+## change to factor 
+data$TOLDHI2 <- as.factor(data$TOLDHI2)
+
+## rename column 
+data <- rename(data, HighChol = TOLDHI2)
+
+## check 
+#table(data$HighChol, useNA = "always")
+
+#####################################
+
+
+## X_CHOLCHK = Cholesterol check within past five years  
+## 1 = Had cholesterol checked in past 5 years , 
+## 2 = Did not have cholesterol checked in past 5 years , 
+## 3 = Have never had cholesterol checked, 
+## 9 = missing or refsued 
+#table(data$X_CHOLCHK)
+
+## update value(s)
+data[!is.na(data$X_CHOLCHK) & data$X_CHOLCHK == 2,]$X_CHOLCHK <- 0
+data[!is.na(data$X_CHOLCHK) & data$X_CHOLCHK == 3,]$X_CHOLCHK <- 0
+
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$X_CHOLCHK) & data$X_CHOLCHK %in% c(7,9),]$X_CHOLCHK <- NA
+
+
+
+## change to factor 
+data$X_CHOLCHK <- as.factor(data$X_CHOLCHK)
+
+## rename column 
+data <- rename(data, CholCheck = X_CHOLCHK)
+
+## check 
+#table(data$CholCheck, useNA = "always")
+
+#####################################
+
+
+## X_BMI5 = Body Mass Index (BMI) 
+## 1 - 9999 1 or greater Notes: WTKG3/(HTM4*HTM4) (Has 2 implied decimal places), 
+## BLANK = refused to answer, missing
+#table(data$X_BMI5)
+#sum(is.na(data$X_BMI5)) #no missing 
+
+## update value(s)
+## round values (2099 => 20.99)
+data$X_BMI5 <- round(data$X_BMI5/100,2)
+
+## rename column 
+data <- rename(data, BMI = X_BMI5)
+org.BMI <- data[,c("BMI","HeartDiseaseorAttack")]
+## check 
+#table(data$BMI, useNA = "always")
+
+#####################################
+
+
+## SMOKE100 = Have you smoked at least 100 cigarettes in your entire life?   [Note:  5 packs = 100 cigarettes] 
+## 1 = Yes, 
+## 2 = No, 
+## 7 = Don't know, 
+## 9 = Refused / missing
+#table(data$SMOKE100, useNA = "always")
+
+## update value(s)
+## 0 = No,
+## 1 = Yes, 
+data[!is.na(data$SMOKE100) & data$SMOKE100 == 2,]$SMOKE100 <- 0
+
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$SMOKE100) & data$SMOKE100 %in% c(7,9),]$SMOKE100 <- NA
+
+## change to factor 
+data$SMOKE100 <- as.factor(data$SMOKE100)
+
+## rename column 
+data <- rename(data, Smoker = SMOKE100)
+
+## check 
+#table(data$Smoker, useNA = "always")
+
+#####################################
+
+## CVDSTRK3 = (Ever told) you had a stroke. 
+## 1 = Yes, 
+## 2 = No, 
+## 7 = Don't know, 
+## 9 = Refused / missing
+#table(data$CVDSTRK3, useNA = "always")
+
+## update value(s)
+## 0 = No,
+## 1 = Yes, 
+data[data$CVDSTRK3 == 2,]$CVDSTRK3 <- 0
+
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$CVDSTRK3) & data$CVDSTRK3 %in% c(7,9),]$CVDSTRK3 <- NA
+
+## change to factor 
+data$CVDSTRK3 <- as.factor(data$CVDSTRK3)
+
+## rename column 
+data <- rename(data, Stroke = CVDSTRK3)
+
+## check 
+#table(data$Stroke, useNA = "always")
+
+#####################################
+
+## DIABETE3 = (Ever told) you have diabetes  (If "Yes" and respondent is female, ask "Was this only when you were pregnant?". If Respondent says pre-diabetes or borderline diabetes, use response code 4.) 
+## 1 = Yes, 
+## 2 = Yes, but female told only during pregnancy, 
+## 3 = No, 
+## 4 = No, pre-diabetes or borderline diabetes, 
+## 7 = Don't know, 
+## 9 = Refused / missing, blank = not asked
+#table(data$DIABETE3, useNA = "always")
+#sum(is.na(data$DIABETE3)) # no blank
+
+## update value(s)
+## 0 = No |OR| Yes, but female told only during pregnancy  
+## 1 = No, pre-diabetes or borderline diabetes, 
+## 2 = Yes, 
+data[!is.na(data$DIABETE3) & data$DIABETE3 %in% c(2,3),]$DIABETE3 <- 0
+data[!is.na(data$DIABETE3) & data$DIABETE3 == 1,]$DIABETE3 <- 2
+data[!is.na(data$DIABETE3) & data$DIABETE3 == 4,]$DIABETE3 <- 1
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$DIABETE3) & data$DIABETE3 %in% c(7,9),]$DIABETE3 <- NA
+
+## change to factor 
+data$DIABETE3 <- as.factor(data$DIABETE3)
+
+## rename column 
+data <- rename(data, Diabetes = DIABETE3)
+
+## check 
+#table(data$Diabetes, useNA = "always")
+
+#####################################
+
+## X_TOTINDA = Adults who reported doing physical activity or exercise during the past 30 days other than their regular job
+## 1 = Had physical activity or exercise , 
+## 2 = No physical activity or exercise in last 30 days , 
+## 9 = Don’t know/Refused/Missing 
+#table(dat$X_TOTINDA, useNA = "always")
+#sum(is.na(data$X_TOTINDA)) # no blank
+
+## update value(s)
+## 0 = No physical activity or exercise in last 30 days , 
+## 1 = Had physical activity or exercise , 
+data[!is.na(data$X_TOTINDA) & data$X_TOTINDA == 2,]$X_TOTINDA <- 0
+
+## drop not answered ie 9 
+data[!is.na(data$X_TOTINDA) & data$X_TOTINDA == 9,]$X_TOTINDA <- NA
+
+## change to factor 
+data$X_TOTINDA <- as.factor(data$X_TOTINDA)
+
+## rename column 
+data <- rename(data, PhysActivity = X_TOTINDA)
+
+## check 
+#table(data$PhysActivity, useNA = "always")
+
+#####################################
+
+## _FRTLT1 = Consume Fruit 1 or more times per day 
+## 1 = Consumed fruit one or more times per day , 
+## 2 = Consumed fruit less than one time per day , 
+## 9 = Don’t know/Refused/Missing 
+#table(dat$X_FRTLT1, useNA = "always")
+#sum(is.na(data$X_FRTLT1)) # no blank
+
+## update value(s)
+data[data$X_FRTLT1 == 2,]$X_FRTLT1 <- 0
+
+## drop not answered ie 7 & 9 
+data[data$X_FRTLT1 == 9,]$X_FRTLT1 <- NA
+
+## change to factor 
+data$X_FRTLT1 <- as.factor(data$X_FRTLT1)
+
+## rename column 
+data <- rename(data, Fruits = X_FRTLT1)
+
+## check 
+#table(data$Fruits, useNA = "always")
+
+#####################################
+
+## _VEGLT1 = Consume Fruit 1 or more times per day 
+## 1 = Consumed vegetables one or more times per day , 
+## 2 = Consumed vegetables less than one time per day , 
+## 9 = Don’t know/Refused/Missing 
+#table(dat$X_VEGLT1, useNA = "always")
+#sum(is.na(data$X_VEGLT1)) # no blank
+
+## update value(s)
+data[data$X_VEGLT1 == 2,]$X_VEGLT1 <- 0
+
+## drop not answered ie 7 & 9 
+data[data$X_VEGLT1 == 9,]$X_VEGLT1 <- NA
+
+## change to factor 
+data$X_VEGLT1 <- as.factor(data$X_VEGLT1)
+
+## rename column 
+data <- rename(data, Veggies = X_VEGLT1)
+
+## check 
+#table(data$Veggies, useNA = "always")
+
+#####################################
+
+## X_RFDRHV5 = Heavy drinkers (adult men having more than 14 drinks per week and adult women having more than 7 drinks per week)
+## 1 = No , 
+## 2 = Yes , 
+## 9 = Don’t know/Refused/Missing 
+#table(dat$X_RFDRHV5, useNA = "always")
+#sum(is.na(data$X_RFDRHV5)) # no blank
+
+## update value(s)
+data[data$X_RFDRHV5 == 1,]$X_RFDRHV5 <- 0
+data[data$X_RFDRHV5 == 2,]$X_RFDRHV5 <- 1
+
+## drop not answered ie 7 & 9 
+data[data$X_RFDRHV5 == 9,]$X_RFDRHV5 <- NA
+
+## change to factor 
+data$X_RFDRHV5 <- as.factor(data$X_RFDRHV5)
+
+## rename column 
+data <- rename(data, HeavyAlcoholConsumption = X_RFDRHV5)
+
+## check 
+#table(data$HeavyAlcoholConsumption, useNA = "always")
+
+#####################################
+
+## HLTHPLN1 = Do you have any kind of health care coverage, including health insurance, prepaid plans such as HMOs, or government plans such as Medicare, or Indian Health Service?
+## 1 = Yes , 
+## 2 = No , 
+## 7 = Don’t know/Not Sure, 
+## 9 = Refused
+#table(dat$HLTHPLN1, useNA = "always")
+
+## update value(s)
+data[data$HLTHPLN1 == 2,]$HLTHPLN1 <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$HLTHPLN1) & data$HLTHPLN1 %in% c(7,9),]$HLTHPLN1 <- NA
+
+## change to factor 
+data$HLTHPLN1 <- as.factor(data$HLTHPLN1)
+
+## rename column 
+data <- rename(data, AnyHealthcare = HLTHPLN1)
+
+## check 
+#table(data$AnyHealthcare, useNA = "always")
+
+#####################################
+
+## MEDCOST = Was there a time in the past 12 months when you needed to see a doctor but could not because of cost? 
+## 1 = Yes , 
+## 2 = No , 
+## 7 = Don’t know/Not Sure, 
+## 9 = Refused
+#table(dat$MEDCOST, useNA = "always")
+#sum(is.na(data$MEDCOST)) # no blank
+
+## update value(s)
+data[!is.na(data$MEDCOST) & data$MEDCOST == 2,]$MEDCOST <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$MEDCOST) & data$MEDCOST %in% c(7,9),]$MEDCOST <- NA
+
+## change to factor 
+data$MEDCOST <- as.factor(data$MEDCOST)
+
+## rename column 
+data <- rename(data, NoDocbcCost = MEDCOST)
+
+## check 
+#table(data$NoDocbcCost, useNA = "always")
+
+#####################################
+
+## GENHLTH = Would you say that in general your health is: 
+## 1 = Excellent, 
+## 2 = Very good, 
+## 3= Good, 
+## 4 = Fair, 
+## 5= Poor, 
+## 7 = Don't know/Not Sure, 
+## 9 = Refused, BLANK = Not Aksed
+#table(dat$GENHLTH, useNA = "always")
+#sum(is.na(data$GENHLTH)) # no blank
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$GENHLTH) & data$GENHLTH %in% c(7,9),]$GENHLTH <- NA
+
+## change to factor 
+data$GENHLTH <- as.factor(data$GENHLTH)
+
+## rename column 
+data <- rename(data, GenHlth = GENHLTH)
+
+## check 
+#table(data$GenHlth, useNA = "always")
+
+#####################################
+
+## MENTHLTH = Was there a time in the past 12 months when you needed to see a doctor but could not because of cost? 
+## 1 - 30 = Number of days  , 
+## 88 = None , 
+## 77 = Don’t know/Not Sure, 
+## 99 = Refused
+#table(dat$MENTHLTH, useNA = "always")
+#sum(is.na(data$MENTHLTH)) # no blank
+
+## update value(s)
+data[data$MENTHLTH == 88,]$MENTHLTH <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$MENTHLTH) & data$MENTHLTH %in% c(77,99),]$MENTHLTH <- NA
+
+
+## change to factor 
+data$MENTHLTH <- as.numeric(data$MENTHLTH)
+
+## rename column 
+data <- rename(data, MentHlth = MENTHLTH)
+
+## check 
+#table(data$MentHlth, useNA = "always")
+
+#####################################
+
+## PHYSHLTH = Now thinking about your physical health, which includes physical illness and injury, for how many days during the past 30 days was your physical health not good?
+## 1 - 30 = Number of days  , 
+## 88 = None , 
+## 77 = Don’t know/Not Sure, 
+## 99 = Refused
+#table(data$PHYSHLTH, useNA = "always")
+#sum(is.na(data$PHYSHLTH)) # no blank
+
+## update value(s)
+data[!is.na(data$PHYSHLTH) & data$PHYSHLTH == 88,]$PHYSHLTH <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$PHYSHLTH) & data$PHYSHLTH %in% c(77,99),]$PHYSHLTH <- NA
+
+## change to factor 
+data$PHYSHLTH <- as.numeric(data$PHYSHLTH)
+
+## rename column 
+data <- rename(data, PhysHlth = PHYSHLTH)
+
+## check 
+#table(data$PhysHlth, useNA = "always")
+
+#####################################
+
+## DIFFWALK = Do you have serious difficulty walking or climbing stairs? 
+## 1 = Yes , 
+## 2 = No , 
+## 7 = Don’t know/Not Sure, 
+## 9 = Refused
+#table(dat$DIFFWALK, useNA = "always")
+#sum(is.na(data$DIFFWALK)) # no blank
+
+## update value(s)
+data[!is.na(data$DIFFWALK) & data$DIFFWALK == 2,]$DIFFWALK <- 0
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$DIFFWALK) & data$DIFFWALK %in% c(7,9),]$DIFFWALK <- NA
+
+## change to factor 
+data$DIFFWALK <- as.factor(data$DIFFWALK)
+
+## rename column 
+data <- rename(data, DiffWalk = DIFFWALK)
+
+## check 
+#table(data$DiffWalk, useNA = "always")
+
+#####################################
+
+## SEX = Indicate sex of respondent. 
+## 1 = MALE , 
+## 2 = FEMALE
+#table(dat$SEX, useNA = "always")
+#sum(is.na(data$SEX)) # no blank
+
+## update value(s)
+data[data$SEX == 2,]$SEX <- 0
+
+## change to factor 
+data$SEX <- as.factor(data$SEX)
+
+## rename column 
+data <- rename(data, Sex = SEX)
+
+## check 
+#table(data$Sex, useNA = "always")
+
+#####################################
+
+## X_AGEG5YR = Fourteen-level age category 
+## 1 = 18 <= AGE <= 24  , 
+## 2 = 25 <= AGE <= 29 , 
+## .... 
+## 13 = Age 80 or older  , 
+## 14 = Don’t know/Refused/Missing 
+#table(data$X_AGEG5YR, useNA = "always")
+#sum(is.na(data$X_AGEG5YR)) # no blank
+
+
+## drop not answered ie 14
+data[data$X_AGEG5YR == 14,]$X_AGEG5YR <- NA
+
+
+## rename column 
+data <- rename(data, AgeGroup = X_AGEG5YR)
+
+## check 
+#table(data$AgeGroup, useNA = "always")
+
+#####################################
+
+## EDUCA = What is the highest grade or year of school you completed? 
+## 1 = Never attended school or only kindergarten, 
+## 2 = Grades 1 through 8 (Elementary), 
+## 3= Grades 9 through 11 (Some high school), 
+## 4 = Grade 12 or GED (High school graduate), 
+## 5= College 1 year to 3 years (Some college or technical school), 
+## 6= College 4 years or more (College graduate), 
+## 9 = Refused
+#table(dat$EDUCA, useNA = "always")
+#sum(is.na(data$EDUCA)) # no blank
+
+
+## drop not answered ie 7 & 9 
+data[data$EDUCA == 9,]$EDUCA <- NA
+
+## change to factor 
+data$EDUCA <- as.factor(data$EDUCA)
+
+## rename column 
+data <- rename(data, Education = EDUCA)
+
+## check 
+#table(data$Education, useNA = "always")
+
+#####################################
+
+## INCOME2 = Is your annual household income from all sources:  (If respondent refuses at any income level, code "Refused.")
+## 1 = Less than $10,000 , 
+## 2 = GLess than $15,000 ($10,000 to less than $15,000), 
+## 3= Less than $20,000 ($15,000 to less than $20,000) , 
+## 4 = Less than $25,000 ($20,000 to less than $25,000), 
+## 5= Less than $35,000 ($25,000 to less than $35,000), 
+## 6= Less than $50,000 ($35,000 to less than $50,000), 
+## 7 = Less than $75,000 ($50,000 to less than $75,000),  
+## 8 = $75,000 or more, 
+## 77 = Don’t know/Not sure, 
+## 99 = Refused
+#table(dat$INCOME2, useNA = "always")
+#sum(is.na(data$INCOME2)) # no blank
+
+
+## drop not answered ie 7 & 9 
+data[!is.na(data$INCOME2) & data$INCOME2 %in% c(77,99),]$INCOME2 <- NA
+
+## change to factor 
+data$INCOME2 <- as.factor(data$INCOME2)
+
+## rename column 
+data <- rename(data, Income = INCOME2)
+
+## check 
+#table(data$Income, useNA = "always")
+
+#####################################
+
+## Check cleaned data structure 
+dim(data)
+```
+
+The CDC has identified individuals with high blood pressure & high
+cholesterol, diabetes, unhealthy lifestyle & diet
+(<https://www.cdc.gov/chronicdisease/resources/publications/factsheets/heart-disease-stroke.htm>)
+
+1- selected a subset of variables using the CDC risk factors 2- cleaned
+the data using codebook 3- converted all values correspond to not
+answered, missing, not aksed to NA
+
+```{r variables included, warning = FALSE}
+explanatory = c("HighBP", 
+                "HighChol", 
+                "CholCheck",
+                "BMI",
+                "Smoker",
+                "Stroke",
+                "Diabetes",
+                "PhysActivity",
+                "Fruits",
+                "Veggies",
+                "HeavyAlcoholConsumption",
+                "AnyHealthcare",
+                "NoDocbcCost",
+                "GenHlth", 
+                "MentHlth", 
+                "PhysHlth", 
+                "DiffWalk", 
+                "Sex", 
+                "AgeGroup", 
+                "Education", 
+                "Income")
+dependent = "HeartDiseaseorAttack"
+```
+
+```{r missing, warning = FALSE}
+data.miss.bytarget <- gg_miss_var(data, show_pct = TRUE, facet = HeartDiseaseorAttack)
+data.miss.bytarget
+```
+
+less missing high cholesterol level across respondents with heart
+disease
+
+### Missing values
+
+```{r missing values, warning=FALSE}
+set.seed(5003)
+
+#test 10% of data 
+inMissing <- createDataPartition(data$HeartDiseaseorAttack, p = 0.1)[[1]]
+missing.sample <- data[ inMissing, ]
+
+#Creating visualization of missing data
+missing.cluster <- vis_miss(missing.sample, warn_large_data = FALSE,sort_miss = TRUE, cluster = TRUE) + 
+  theme_minimal() + 
+  theme(text = element_text(size=10),axis.text.x = element_text(angle=90,hjust=0))
+
+missing.cluster
+```
+
+1- missing at random (MAR), lifestyle and diatery variables 2- income
+variable has the highest % of missing values 3- only 4.3% missing of
+total values 4- decision to drop all non-complete records, there is a
+chance this approach may introduce bias
+
+```{r remove incomplete cases, warning = FALSE}
+# Drop all records with N/A values - there is a chance this approach may introduce bias  
+data <- data[complete.cases(data),] 
+```
+
+### Scaling
+
+```{r Feature engineering, warning = FALSE}
+# Create dummy variables (one hot encoding)
+dummyModel <- dummyVars(HeartDiseaseorAttack ~ Diabetes+GenHlth+Education+Income, data = data)
+dataX <- as.data.frame(predict(dummyModel, newdata = data))
+dataX <- cbind(dplyr::select(data, -c("Diabetes","GenHlth","Education","Income")),dataX)
+dataX <- data.frame(lapply(dataX, function(x) as.numeric(as.character(x))))
+dataX$HeartDiseaseorAttack <- as.factor(dataX$HeartDiseaseorAttack)
+
+# Normalise 
+rangeModel <- preProcess(dataX, method = "range")
+dataX <- predict(rangeModel, newdata = dataX)
+str(dataX)
+```
+
+```{r}
+remove(test)
+```
+
+
+# Basic Data Exploration
+
+### target variable
+
+```{r target variable, echo=FALSE, out.width="50%", warning = FALSE}
+
+# classify missing features
+target <- tibble(table(dataX$HeartDiseaseorAttack[!is.na(dataX$HeartDiseaseorAttack)]))
+target <- rename(target, Count = `table(dataX$HeartDiseaseorAttack[!is.na(dataX$HeartDiseaseorAttack)])`)
+target$Response <- c('No','Yes')
+target$tlabel <- paste0(round(target$Count/1000,1),'k')
+
+#plot missing features
+ggplot(target, aes(x = Count/1000, y = Response, fill = Response)) +
+  geom_col() +
+  geom_text(
+    aes(label = tlabel), 
+    ## make labels left-aligned
+    hjust = 0.5, nudge_x = 10
+  ) +
+  xlim(0, 250) +
+  labs(title = "Respondents reported having coronary heart disease",
+              subtitle = "Ever had CHD or MI?",
+              x = "Count ('000)", 
+              y = "Responded",
+              caption="Figure (1): Response Variable Distribution"
+       )+   
+  coord_flip() + 
+  ## change plot appearance
+  theme_minimal()
+```
+
+The dataset is very imbalanced with over 90% of cases being not having
+any CVD.
+
+### Variables with low variance
+
+```{r nearzeroval, warning = FALSE}
+# #explore values with less than 5% variation 
+# colnames(dataX[,nearZeroVar(dataX, freqCut = 95/5, uniqueCut = 10)])
+# x <- as.data.frame(dataX[,c('CholCheck', 'Stroke','AnyHealthcare', 'Diabetes.1')])
+#            
+# featurePlot(x, 
+#             dataX$HeartDiseaseorAttack,
+#             plot = 'density')
+```
+
+### Investigate low information features
+### Correlation analysis
+
+```{r correlation plot, warning = FALSE}
+#convert data to numeric in order to run correlations
+  #convert to factor first to keep the integrity of the data - each value will become a number rather than turn into NA
+  df_cor <- dataX
+  df_cor <- df_cor %>% mutate_if(is.character, as.factor)
+  df_cor <- df_cor %>% mutate_if(is.factor, as.numeric)
+  #run a correlation and drop the insignificant ones
+  corr <- cor(df_cor)
+
+  #prepare to drop duplicates and correlations of 1     
+#  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #drop perfect correlations
+  #corr[corr == 1] <- NA 
+  #turn into a 3-column table
+  corr <- as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr <- na.omit(corr) 
+  
+  #select significant values  
+#  corr <- subset(corr, abs(Freq) > 0.5) 
+  #sort by highest correlation
+#  corr <- corr[order(-abs(corr$Freq)),] 
+  #print table
+  #print(corr)
+
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  
+  #plot correlations visually
+  corrplot(mtx_corr, 
+           method ='color', 
+           is.corr=TRUE, 
+           tl.col="black", 
+           col = COL2('PuOr', 20), 
+           na.label=" ", 
+           number.cex = 0.5,   
+           tl.cex = 0.5)
+  
+```
+
+As we see, there is a positive correlation between CVDs and high blood
+pressure, and negative correlation between healthy lifestyle variables
+and CVDs. This shows that people with active lifestyle and healthy diate
+are less likely to have CVD.
+
+#### CVD and smoking
+
+```{r CVD and smoking, warning = FALSE}
+#smokers are at more risk of having CVDs 
+hadHDA <-dataX[dataX$HeartDiseaseorAttack==1,] 
+ggplot(dataX, aes( y = Smoker, fill = HeartDiseaseorAttack))+
+  geom_bar()+
+  theme_minimal()
+```
+
+Smokers are more likely to have CVDs.
+
+#### CVD and physical activity
+
+```{r CVD and physical activity, warning = FALSE}
+#physical activity not necessarily prevent HDA
+ggplot(dataX, aes( y = PhysActivity, fill = HeartDiseaseorAttack))+
+  geom_bar()+
+  theme_minimal()
+```
+
+#### CVD and Diabetes
+
+```{r CVD and Diabetes, warning = FALSE}
+#Diabetics respondents are at more risk of being diagnosed with CDV
+dataX %>%
+  group_by(Diabetes.0,Diabetes.1,Diabetes.2,HeartDiseaseorAttack) %>%
+  summarise(cnt = n()) %>%
+  mutate(freq = formattable::percent(cnt / sum(cnt), 1))
+```
+
+People with diabetes types 1 and 2 are more likely to have CVDs
+
+### CVD and BMI distribution
+
+```{r CVD and BMI distribution, warning = FALSE}
+ggplot(org.BMI, aes(x = HeartDiseaseorAttack, y = BMI, fill = HeartDiseaseorAttack)) + 
+  ggdist::stat_halfeye(
+    adjust = .5, 
+    width = .6, 
+    .width = 0, 
+    justification = -.3, 
+    point_colour = NA) +
+  geom_point(
+    size = 0.3,
+    alpha = .05,
+    position = position_jitter(
+      seed = 5003, width = .1 )
+  ) + 
+  geom_boxplot(
+    width = .25, 
+    outlier.shape = NA
+  ) + theme_minimal()+
+  coord_cartesian(xlim = c(1.2, NA), clip = "off")
+```
+
+The overall of population in the database is overweight, however, people
+with CVD have a slightly higher BMI.
+
+# Visualization t-SNE
+
+To try to understand the data better, we will try visualizing the data
+using t-Distributed Stochastic Neighbour Embedding, a technique to
+reduce dimensionality. To train the model, perplexity was set to 50,
+100, 500 and 700. The visualisation should give us a hint as to whether
+there exist any "discoverable" patterns in the data which the model
+could learn. If there is no obvious structure in the data, it is more
+likely that the model will perform poorly.
+
+```{r tSNE, warning = FALSE}
+# Use 10% of data to compute t-SNE
+tsne_subset <- 1:as.integer(0.005*nrow(dataX))
+
+#prep 50
+tsne50 <- Rtsne(dataX[tsne_subset,-c(1, 31)], perplexity = 50, theta = 0.5, pca = F, verbose = F, max_iter = 500, dims = 2, check_duplicates = F)
+
+classes <- as.factor(dataX$HeartDiseaseorAttack[tsne_subset])
+tsne_mat <- as.data.frame(tsne50$Y)
+prep50 <- ggplot(tsne_mat, aes(x = V1, y = V2)) + geom_point(aes(color = classes)) + theme_minimal() +  ggtitle("t-SNE prep = 50") + scale_color_manual(values = c("#E69F00", "#56B4E9"))
+
+#prep 100
+tsne100 <- Rtsne(dataX[tsne_subset,-c(1, 31)], perplexity = 100, theta = 0.5, pca = F, verbose = F, max_iter = 500, dims = 2, check_duplicates = F)
+
+classes <- as.factor(dataX$HeartDiseaseorAttack[tsne_subset])
+tsne_mat <- as.data.frame(tsne100$Y)
+prep100 <- ggplot(tsne_mat, aes(x = V1, y = V2)) + geom_point(aes(color = classes)) + theme_minimal() +  ggtitle("t-SNE prep = 100") + scale_color_manual(values = c("#E69F00", "#56B4E9"))
+
+
+#prep 500
+tsne500 <- Rtsne(dataX[tsne_subset,-c(1, 31)], perplexity = 150, theta = 0.5, pca = F, verbose = F, max_iter = 1000, dims = 2, check_duplicates = F)
+
+classes <- as.factor(dataX$HeartDiseaseorAttack[tsne_subset])
+tsne_mat <- as.data.frame(tsne500$Y)
+prep500 <- ggplot(tsne_mat, aes(x = V1, y = V2)) + geom_point(aes(color = classes)) + theme_minimal() +  ggtitle("t-SNE prep = 150") + scale_color_manual(values = c("#E69F00", "#56B4E9"))
+
+#prep 700
+tsne700 <- Rtsne(dataX[tsne_subset,-c(1, 31)], perplexity = 250, theta = 0.5, pca = F, verbose = F, max_iter = 5000, dims = 2, check_duplicates = F)
+
+classes <- as.factor(dataX$HeartDiseaseorAttack[tsne_subset])
+tsne_mat <- as.data.frame(tsne700$Y)
+prep700 <- ggplot(tsne_mat, aes(x = V1, y = V2)) + geom_point(aes(color = classes)) + theme_minimal() +  ggtitle("t-SNE prep = 250") + scale_color_manual(values = c("#E69F00", "#56B4E9"))
+
+grid.arrange(
+  prep50,
+  prep100,
+  prep500,
+  prep700,
+  nrow =2,
+  top = "Comparing tSNE prep"
+)
+```
+
+There appears to be no separation between the two classes.
+
+# Modeling Approach
+Standard machine learning algorithms struggle with accuracy on imbalanced data for the following reasons:
+
+ML algorithms struggle with accuracy because of the unequal distribution in dependent variable. This causes the performance of existing classifiers to get biased towards majority class. The algorithms are accuracy driven i.e. they aim to minimize the overall error to which the minority class contributes very little. ML algorithms assume that the data set has balanced class distributions. They also assume that errors obtained from different classes have same cost.
+
+The methods to deal with this problem are widely known as ‘Sampling Methods’. Generally, these methods aim to modify an imbalanced data into balanced distribution using some mechanism. The modification occurs by altering the size of original data set and provide the same proportion of balance.
+
+These methods have acquired higher importance after many researches have proved that balanced data results in improved overall classification performance compared to an imbalanced data set. Hence, it’s important to learn them. Firstly, the data will be split into training and test 80/20 respectivly. It is important to note that sampling techniques will only be applied to the training set and not the testing set.
+
+```{r split into train and test, warning = FALSE}
+set.seed(5003)
+inTrain <- createDataPartition(dataX$HeartDiseaseorAttack, p = 0.8)[[1]]
+train <- dataX[ inTrain, ]
+test <- dataX[-inTrain, ]
+labels <- test$HeartDiseaseorAttack
+paste0("training set include ",nrow(train)," observations (i.e. ",round(nrow(train)/nrow(dataX)*100,0),"% of total records)")
+```
+
+### Principal Component Analysis
+
+```{r hm-PCA, warning = FALSE}
+datamatrix <- data.matrix(train, rownames.force = NA) #converting df to matrix
+PCAdatamatrix <- datamatrix[,-1] #dropping cvd column
+
+#par(mfrow=c(1,2)) # to plot multiple charts ~ doesn't work with ggplot
+
+pca1 <- prcomp(PCAdatamatrix, scale. = TRUE)  #PCA
+
+PCvar <- summary(pca1)$importance[2,] #extracting pca variance by component vector
+
+
+#plot(cumsum(pca1$sdev^2 / sum(pca1$sdev^2)), type="b", main = "Cummulative explained variance" ,xlab="PCA count", ylab="variance") #plotting cummulative explained variance
+
+ggplot(as.data.frame(PCvar), aes(1:39, cumsum(as.data.frame(PCvar)[[1]])*100)) + 
+  geom_line(col = 'black') + 
+  geom_point(col = 'black') +
+  geom_hline(yintercept =90, linetype="dashed", 
+                color = "dark grey", size=0.5) +
+  geom_vline(xintercept =21, linetype="dashed", 
+              color = "dark grey", size=0.5) +
+  labs(title = "Variance explained by PCA",
+            
+            y = "Variance (%)", 
+            x = "Number of PCAs"
+            
+     ) +
+  theme_classic()
+
+df_auth <- data.frame(PCA1 = pca1$x[,1],PCA2 = pca1$x[,2],PCA3 = pca1$x[,3],PCA4 = pca1$x[,4], labels = as.factor(PCAdatamatrix[,1]))
+
+ggplot(df_auth, aes(PCA1, PCA2, col = labels, fill = labels)) + 
+  geom_point(shape = 21, alpha = 0.2) + 
+  stat_ellipse(geom = 'polygon', col = 'black', alpha = 0.1) + 
+  theme_minimal()
+
+plot(PCvar, xlab= "Number of variables", main = "PCA by component") #plotting pca variance by component vector
+
+#biplot(pca1, scale = 0) Doesn't look too good
+```
+Applying PCA on the chosen 40 variables isn't a good idea since they are all contributing actively to explain the variance. However, a multinomial logistic regression has been run below.
+
+```{r HM-model, warning = FALSE}
+
+fitControl1 <- trainControl(method = "cv",
+                           number = 5, #5 in the interest of time
+                           summaryFunction = multiClassSummary) #to get F1 scores etc.
+
+# Multinomial logistic reg with preprocessing as pca
+lrtrainpca <- train(HeartDiseaseorAttack ~ ., data = train, 
+                 method = "multinom",
+                 preProcess=c("pca"),
+                 pcaComp=30,
+                 tuneLength = 10,
+                 trControl = fitControl1)
+
+lrpredpca <- predict(lrtrainpca, newdata = test)
+
+```
+
+```{r  HM-accuracy, warning = FALSE}
+# lrtrainpca
+maxf1<- max(lrtrainpca$resample$F1) #training max 
+maxAcc<- max(lrtrainpca$resample$Accuracy) #training max 
+maxf1
+maxAcc
+```
+
+```{r HM-summary, warning = FALSE}
+cmpca<- confusionMatrix(table(test[,"HeartDiseaseorAttack"],lrpredpca),mode = "everything",positive = "1") 
+
+plot(lrpredpca)
+
+cmpca$byClass #test data assesment metrics 
+
+summary(lrpredpca)
+```
+
+### Apply Feature Selection
+
+```{r boruta}
+library(Boruta)
+
+set.seed(888)
+boruta_train <- Boruta(HeartDiseaseorAttack~., data=train, doTrace=2)
+print(boruta_train)
+
+# Plot Boruta 
+# jpeg(file="boruta.jpeg")
+plot(boruta_train, xlab = "", xaxt = "n", main="Boruta Variable Importance Chart")
+lz <- lapply(1:ncol(boruta_train$ImpHistory), function(i)
+              boruta_train$ImpHistory[is.finite(boruta_train$ImpHistory[,i]),i])
+names(lz) <- colnames(boruta_train$ImpHistory)
+labels <- sort(sapply(lz,median))
+axis(side = 1,las=2,labels = names(labels), 
+     at = 1:ncol(boruta_train$ImpHistory), cex.axis = 0.7)
+# dev.off()
+
+boruta_final <- TentativeRoughFix(boruta_train)
+print(boruta_final)
+
+confirmed_attributes <- getSelectedAttributes(boruta_final, withTentative = F)
+df_boruta <- attStats(boruta_final)
+class(df_boruta)
+print(df_boruta)
+```
+
+Boruta algorithm identified 12 unimportant variables. These will be removed from the training and test dataset.
+
+```{r apply feature reduction}
+train_fs <- subset(train, select = -c(HighChol, Smoker, Diabetes.1, Education.1, Income.1, Income.2, Income.3, Income.4, Income.5, Income.6, Income.7, Income.8))
+test_fs <- subset(test, select = -c(HighChol, Smoker, Diabetes.1, Education.1, Income.1, Income.2, Income.3, Income.4, Income.5, Income.6, Income.7, Income.8))
+```
+
+Secondly, below sampling methods will be used to treat the imbalanced dataset:
+
+Undersampling Oversampling Synthetic Data Generation
+
+### Undersampling
+
+This method reduces the number of observations from majority class to
+make the data set balanced. This method is best to use when the data set
+is huge and reducing the number of training samples helps to improve run
+time and storage troubles.
+
+Undersampling methods are of 2 types: Random and Informative.
+
+Random undersampling method randomly chooses observations from majority
+class which are eliminated until the data set gets balanced. Informative
+undersampling follows a pre-specified selection criterion to remove the
+observations from majority class.
+
+A possible problem with this method is that removing observations may
+cause the training data to lose important information pertaining to
+majority class.
+
+```{r undersampling, warning = FALSE}
+## Under sampling 
+set.seed(5003)
+data_balanced_under <- ovun.sample(HeartDiseaseorAttack ~ ., data = train, method = "under")$data
+data_balanced_under_pca <- ovun.sample(HeartDiseaseorAttack ~ ., data = pca.train, method = "under")$data
+
+"  Random Under-sampling:  "
+"  ----------------------  "
+table(data_balanced_under$HeartDiseaseorAttack)
+
+```
+
+### Oversampling
+
+This method works with minority class. It replicates the observations
+from minority class to balance the data. Similar to undersampling, this
+method also can be divided into two types: Random Oversampling and
+Informative Oversampling.
+
+Random oversampling balances the data by randomly oversampling the
+minority class. Informative oversampling uses a pre-specified criterion
+and synthetically generates minority class observations.
+
+An advantage of using this method is that it leads to no information
+loss. The disadvantage of using this method is that, since oversampling
+simply adds replicated observations in original data set, it ends up
+adding multiple observations of several types, thus make the model more
+likely to overfit.
+
+```{r oversampling, warning = FALSE}
+## oversampling
+set.seed(5003)
+data_balanced_over <- ovun.sample(HeartDiseaseorAttack ~ ., data = train, method = "over")$data
+data_balanced_over_pca <- ovun.sample(HeartDiseaseorAttack ~ ., data = pca.train, method = "over")$data
+
+"  Random Over-sampling:  "
+"  ----------------------  "
+table(data_balanced_over$HeartDiseaseorAttack)
+```
+
+### Synthetic Data Generation (SMOTE and ROSE)
+
+In simple words, instead of replicating and adding the observations from
+the minority class, it overcome imbalances by generates artificial data.
+It is also a type of oversampling technique.
+
+In regards to synthetic data generation, synthetic minority oversampling
+technique (SMOTE) is a powerful and widely used method. SMOTE algorithm
+draws artificial samples by choosing points that lie on the line
+connecting the rare observation to one of its nearest neighbors in the
+feature space. ROSE (random over-sampling examples) uses smoothed
+bootstrapping to draw artificial samples from the feature space
+neighbourhood around the minority class.
+
+The modeling approach taking will involve training all classifiers on
+the train set with class imbalance suitably altered using each of the
+techniques above. The chosen model will be based on which technique and
+model yields the best ROC-AUC score on a holdout test set.
+
+```{r ROSE and SMOTE, warning = FALSE}
+set.seed(5003)
+
+## ROSE 
+data_balanced_rose <- ROSE(HeartDiseaseorAttack ~ ., data  = train)$data 
+data_balanced_rose_pca <- ROSE(HeartDiseaseorAttack ~ ., data  = pca.train)$data 
+
+"  ROSE Sampling:  "
+"  --------------  "
+table(data_balanced_over$HeartDiseaseorAttack)
+
+## SMOTE
+data_balanced_smote <- smote(HeartDiseaseorAttack  ~ ., train)
+
+
+"  SMOTE Sampling:  "
+"  ---------------  "
+table(data_balanced_smote$HeartDiseaseorAttack)
+#data_balanced_smote_pca <- smote(HeartDiseaseorAttack  ~ ., pca.train)
+```
+
+# Data Preparation
+
+'Time' feature does not indicate the actual time of the transaction and
+is more of listing the data in chronological order. Based on the data
+visualization above we assume that 'Time' feature has little or no
+significance in correctly classifying a fraud transaction and hence
+eliminate this column from further analysis.
+
+# Logistic Regression (glm)
+
+Before we start using sampling let us first look at how glm performs
+with imbalanced data. We use the function roc.curve available in the
+ROSE package to gauge model performance on the test set
+
+```{r fit glm, warning = FALSE}
+#fit models
+glm_fit <- glm(HeartDiseaseorAttack ~ ., data = train, family = 'binomial')
+glm_fit_fs <- glm(HeartDiseaseorAttack ~ ., data = train_fs, family = 'binomial') 
+glm_fit_up <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_over, family = 'binomial')
+glm_fit_down <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_under, family = 'binomial')
+glm_fit_rose <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_rose, family = 'binomial')
+glm_fit_smote <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_smote, family = 'binomial')
+
+# panaliesed model with features 
+# lr_mod <- 
+#   logistic_reg(penalty = 0.01, mixture = 1) %>% 
+#   set_engine("glmnet") %>%
+#   fit(HeartDiseaseorAttack ~. , data = data_balanced_under)
+# 
+# reg_coef = coef(lr_mod$fit,s=0.01)
+
+#predict models 
+pred_glm <- predict(glm_fit, newdata = test, type = 'response')
+pred_glm_fs <- predict(glm_fit_fs, newdata = test_fs, type = 'response')
+pred_glm_up <- predict(glm_fit_up, newdata = test, type = 'response')
+pred_glm_down <- predict(glm_fit_down, newdata = test, type = 'response')
+pred_glm_rose <- predict(glm_fit_rose, newdata = test, type = 'response')
+pred_glm_smote <- predict(glm_fit_smote, newdata = test, type = 'response')
+
+#AUC
+roc.curve(test$HeartDiseaseorAttack, pred_glm, plotit = FALSE)
+roc.curve(test_fs$HeartDiseaseorAttack, pred_glm_fs, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, pred_glm_up, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, pred_glm_down, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, pred_glm_rose, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, pred_glm_smote, plotit = FALSE)
+
+# We evaluate the glm model performance on test data by visualising the roc score. 
+{par(pty = "m") 
+    roc(test$HeartDiseaseorAttack, pred_glm, plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+    plot.roc(test$HeartDiseaseorAttack, pred_glm_fs, percent = TRUE, col = 'green', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_glm_up, percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_glm_down, percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_glm_rose, percent = TRUE,  col = 'purple', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_glm_smote, percent = TRUE,  col = 'orange', lwd = 1, add = TRUE)
+    legend("bottomright", legend =c("glm/baseline", "glm/featureSelection", "glm/oversampling", "glm/undersampling", "glm/ROSE", "glm/SMOTE"), col = c('red','green','blue','black','purple', 'orange'), lwd = 1)}
+
+# ## PCA!
+# ## fit glm model with PCA
+# glm_fit_pca <- glm(HeartDiseaseorAttack ~ ., data = pca.train, family = 'binomial')
+# glm_fit_up_pca <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_over_pca, family = 'binomial')
+# glm_fit_down_pca <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_under_pca, family = 'binomial')
+# glm_fit_rose_pca <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_rose_pca, family = 'binomial')
+# #glm_fit_smote_pca <- glm(HeartDiseaseorAttack ~ ., data = data_balanced_smote_pca, family = 'binomial')
+# 
+# pred_glm_pca <- predict(glm_fit_pca, newdata = pca.test, type = 'response')
+# pred_glm_up_pca<-predict(glm_fit_up_pca, newdata = pca.test, type = 'response')
+# pred_glm_down_pca<-predict(glm_fit_down_pca, newdata = pca.test, type = 'response')
+# pred_glm_rose_pca<-predict(glm_fit_rose_pca, newdata = pca.test, type = 'response')
+# #pred_glm_smote_pca <- predict(glm_fit_smote_pca, newdata = pca.test, type = 'response')
+# 
+# {par(pty = "m") 
+#     roc(pca.test$HeartDiseaseorAttack, pred_glm_pca, plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+#     plot.roc(pca.test$HeartDiseaseorAttack, pred_glm_up_pca, percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+#     plot.roc(pca.test$HeartDiseaseorAttack, pred_glm_down_pca, percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+#     plot.roc(pca.test$HeartDiseaseorAttack, pred_glm_rose_pca, percent = TRUE,  col = 'purple', lwd = 1, add = TRUE)
+#     #plot.roc(pca.test$HeartDiseaseorAttack, pred_glm_smote_pca, percent = TRUE,  col = 'orange', lwd = 1, add = TRUE)
+#     legend("bottomright", legend =c("Baseline", "Oversampling", "Undersampling", "ROSE"), col = c('red','blue','black','purple'), lwd = 1)}
+# 
+```
+
+The ROC score is relatively the same across all different sampling
+techniques compared to the baseline model, therefore, we will use the
+baseline model.
+
+## glm confusion matrix
+
+```{r confusion matrix standard glm, warning = FALSE}
+
+glm.roc.info <- roc(test$HeartDiseaseorAttack, pred_glm, legacy.axes=TRUE)
+
+#choose the best cutoff point 
+glm.roc.df <- data.frame( 
+  tpp = glm.roc.info$sensitivities , 
+  fpp = (1-glm.roc.info$specificities), 
+  thresholds = glm.roc.info$thresholds
+  )
+
+# 77% threshold 
+glm.cutoff <- min(glm.roc.df[glm.roc.df$tpp < 0.80 ,"thresholds"])
+predicted <- as.factor(ifelse(pred_glm > glm.cutoff, 1, 0))
+confusionMatrix(data =predicted, reference = test$HeartDiseaseorAttack, positive = "1")
+
+# visualise 
+glm.roc.coords <- coords(roc(test$HeartDiseaseorAttack, pred_glm), "all")
+
+ggplot(glm.roc.coords, aes(.data[["threshold"]])) + 
+  geom_line(aes(y = .data[['specificity']], colour = "Specificity")) + 
+  geom_line(aes(y = .data[['sensitivity']], colour = "Sensitivity")) +
+  labs(title = "GLM Specificity vs Sensitivity",
+              x = "Cutoff", 
+              y = "Sensitivity/Specificity"
+       ) + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 1))+ 
+  geom_vline(xintercept =glm.cutoff, linetype="dashed", 
+                color = "black", size=0.5)+
+  scale_color_manual(name = "", values = c( Specificity = "#F8766D", Sensitivity = "#00BFC4", Cutoff = 'black')) +
+  theme_minimal()
+```
+
+## Cross-validation with glm
+
+```{r glm with kfold validation, warning = FALSE}
+# # create full model 
+# cv_glm_fit <- glm(HeartDiseaseorAttack ~ ., data = train, family = 'binomial')
+# cv_glm_predicted <- as.factor(ifelse(cv_glm_fit$fitted.values > 0.1, 1, 0))
+# confusionMatrix(data = cv_glm_predicted, reference = train$HeartDiseaseorAttack, positive = "1")
+# roc.curve(train$HeartDiseaseorAttack, cv_glm_predicted, plotit = TRUE)
+# 
+# roc(train$HeartDiseaseorAttack, cv_glm_fit$fitted.values, plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+
+# apply 10-fold cross-validation to glm
+
+set.seed(5003)
+glm_fold <- createFolds(train[["HeartDiseaseorAttack"]], k = 10)
+
+#create a function to split 
+splitterFunc <- function(x, data, n = nrow(data)){
+  group = factor(ifelse(seq(n) %in% x, "Test", "Training"))
+  split(data, group)
+  }
+
+X_train <- lapply(glm_fold, splitterFunc, data = train, n = nrow(train))
+
+# build glm model 
+glmFun <- function(x, label.name = "HeartDiseaseorAttack"){
+  cv_fit_glm <- glm(HeartDiseaseorAttack ~ ., 
+                     data = x$Training, 
+                     family = 'binomial')
+  cv_predictions_glm <- predict(cv_fit_glm, 
+                         newdata = x$Test, 
+                         type = 'response')
+  predictions <- as.factor(ifelse(cv_predictions_glm > glm.cutoff, 1, 0))
+  actuals <- x$Test[[label.name]]
+  list(predictions = predictions, actuals = actuals)
+}
+
+glm.results <- lapply(X_train, glmFun)
+
+#cv confusion matrix 
+ConfMatrix <- lapply(glm.results, function(x) confusionMatrix(x$predictions, x$actuals, positive = "1"))
+#extracting TPP & TNP 
+cv_glm_Sensitivity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Sensitivity"]], numeric(1))
+cv_glm_Specificity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Specificity"]], numeric(1))
+cv_glm_precision <- vapply(ConfMatrix, function(x) x[["byClass"]][["Precision"]], numeric(1))
+cv_glm_f1 <- vapply(ConfMatrix, function(x) x[["byClass"]][["F1"]], numeric(1))
+
+
+cv_glm_Sensitivity <- data.frame( value = cv_glm_Sensitivity, ind = 'Sensitivity') #combine cv-scores 
+cv_glm_Specificity <- data.frame( value = cv_glm_Specificity, ind = 'Specificty') #combine cv-scores 
+cv_glm_precision <- data.frame( value = cv_glm_precision, ind = 'Precision') #combine cv-scores 
+cv_glm_f1 <- data.frame( value = cv_glm_f1, ind = 'F1') #combine cv-scores 
+
+cv_glm_scores  <- rbind(cv_glm_Sensitivity, cv_glm_Specificity, cv_glm_precision, cv_glm_f1)
+
+#visualise measure results violin plot (for my liking)
+ggplot(cv_glm_scores, aes(x = ind, y = value))  + 
+  geom_violin(trim=FALSE) + 
+  stat_summary(fun.data=mean_sdl) + 
+  theme_minimal() + 
+  
+  geom_boxplot(width=0.1)+ 
+  labs(title = "Logistic Regression Cross-Validation Results",
+              subtitle = "Cross Validation 10 folds ",
+              x = "Performance Measures", y = "Value",
+  )
+paste0("GLM CV Sensitivty score = ", round(mean(cv_glm_Sensitivity$value)*100,2),"%")
+paste0("GLM CV Specificity score = ", round(mean(cv_glm_Specificity$value)*100,2),"%")
+paste0("GLM CV Precision score = ", round(mean(cv_glm_precision$value)*100,2),"%")
+paste0("GLM CV F1 score = ", round(mean(cv_glm_f1$value)*100,2),"%")
+```
+
+Logistic Regression avg. Sensitivity = 78% and Specificity = 75% with
+10-fold cross validation
+
+# Decision Trees (CART)
+
+```{r decision tree, warning = FALSE}
+
+#fit dt model
+dt_fit <- rpart(HeartDiseaseorAttack ~ ., data = train)
+dt_fit_fs <- rpart(HeartDiseaseorAttack ~ ., data = train_fs)
+dt_fit_under <- rpart(HeartDiseaseorAttack ~ ., data = data_balanced_under)
+dt_fit_up <- rpart(HeartDiseaseorAttack ~ ., data = data_balanced_over)
+dt_fit_rose <- rpart(HeartDiseaseorAttack ~ ., data = data_balanced_rose)
+dt_fit_smote <- rpart(HeartDiseaseorAttack ~ ., data = data_balanced_smote)
+
+#test model
+pred_dt <- predict(dt_fit, newdata = test, method = "class")
+pred_dt_fs <- predict(dt_fit_fs, newdata = test_fs, method = "class")
+pred_dt_up <- predict(dt_fit_up, newdata = test, method = "class")
+pred_dt_down <- predict(dt_fit_under, newdata = test, method = "class")
+pred_dt_rose <- predict(dt_fit_rose, newdata = test, method = "class")
+pred_dt_smote <- predict(dt_fit_smote, newdata = test, method = "class")
+
+#AUC
+roc.curve(test$HeartDiseaseorAttack, pred_dt[,2], plotit = FALSE)$auc
+roc.curve(test_fs$HeartDiseaseorAttack, pred_dt_fs[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, pred_dt_up[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, pred_dt_down[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, pred_dt_rose[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, pred_dt_smote[,2], plotit = FALSE)$auc
+
+#visualise AUC 
+{par(pty = "m") 
+    roc(test$HeartDiseaseorAttack, pred_dt[,2], plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+    plot.roc(test_fs$HeartDiseaseorAttack, pred_dt_fs, percent = TRUE, col = 'green', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_dt_up[,2], percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_dt_down[,2], percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_dt_rose[,2], percent = TRUE,  col = 'purple', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, pred_dt_smote[,2], percent = TRUE,  col = 'orange', lwd = 1, add = TRUE)
+    legend("bottomright", legend =c("dt/baseline", "dt/featureSelection", "dt/oversampling", "dt/undersampling", "dt/ROSE", "dt/SMOTE"), col = c('red','green','blue','black','purple', 'orange'), lwd = 1)}
+```
+
+The baseline model for decision tree had a bad AUC score (50%), while
+both over/undersampling had an AUC score of 78%. We will use the DT
+model with undersampling to investigate the decision tree model
+
+### DT Parameter Tuning
+
+```{r investigate undersampling model model, warning = FALSE}
+# Exploring the model
+printcp(dt_fit_under, digits = 3)
+
+# Visualise decision tree 
+rpart.plot(dt_fit_under, roundint = TRUE,
+box.palette = "BuBn", extra = 104,
+type = 5, fallen.leaves = FALSE)
+```
+
+```{r hyperparamter tuning decision tree with crossvalidation, warning = FALSE}
+# rpart hyperparameters tuning
+dt.ctrl <- trainControl(method = "cv",
+                        number = 10,
+                        savePredictions = "final")
+dt.fit.cv <- train(HeartDiseaseorAttack ~., data_balanced_under, method = 'rpart', 
+                   trControl = dt.ctrl, 
+                   tuneLength = 100)
+
+# Visualise cv model
+rpart.plot(dt.fit.cv$finalModel, roundint = TRUE,
+box.palette = "BuBn", extra = 104,
+type = 5, fallen.leaves = FALSE)
+
+dt.predict.cv <- predict(dt.fit.cv, test)
+confusionMatrix(dt.predict.cv, test[,1], positive = '1')
+
+roc.curve(test$HeartDiseaseorAttack, dt.predict.cv, plotit = FALSE)$auc
+
+print(dt.fit.cv)
+plot(dt.fit.cv)
+```
+
+
+``` {r dt cross validation }
+set.seed(5003)
+dt_fold <- createFolds(data_balanced_under[["HeartDiseaseorAttack"]], k = 10)
+
+#create a function to split 
+splitterFunc <- function(x, data, n = nrow(data)){
+  group = factor(ifelse(seq(n) %in% x, "Test", "Training"))
+  split(data, group)
+}
+
+X_train <- lapply(dt_fold, splitterFunc, data = data_balanced_under, n = nrow(data_balanced_under))
+
+# build dt model 
+dt.Fun <- function(x, label.name = "HeartDiseaseorAttack"){
+  cv_fit_dt <- rpart(HeartDiseaseorAttack ~., 
+                     x$Train, 
+                     method = 'class', 
+                     cp = dt.fit.cv$bestTune$cp)
+  dt_pred_down <- predict(cv_fit_dt, x$Test[,-1], type="class")
+  actuals <- x$Test[[label.name]]
+  list(predictions = dt_pred_down, actuals = actuals)
+}
+
+dt.cv.results <- lapply(X_train, dt.Fun)
+
+#cv confusion matrix 
+ConfMatrix <- lapply(dt.cv.results, function(x) confusionMatrix(x$predictions, x$actuals, positive = "1"))
+
+#extracting TPP & TNP 
+cv_dt_Sensitivity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Sensitivity"]], numeric(1))
+cv_dt_Specificity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Specificity"]], numeric(1))
+cv_dt_precision <- vapply(ConfMatrix, function(x) x[["byClass"]][["Precision"]], numeric(1))
+cv_dt_f1 <- vapply(ConfMatrix, function(x) x[["byClass"]][["F1"]], numeric(1))
+
+cv_dt_Sensitivity <- data.frame( value = cv_dt_Sensitivity, ind = 'Sensitivity') #combine cv-scores 
+cv_dt_Specificity <- data.frame( value = cv_dt_Specificity, ind = 'Specificty') #combine cv-scores 
+cv_dt_precision <- data.frame( value = cv_dt_precision, ind = 'Precision') #combine cv-scores 
+cv_dt_f1 <- data.frame( value = cv_dt_f1, ind = 'F1') #combine cv-scores 
+
+cv_dt_scores  <- rbind(cv_dt_Sensitivity, cv_dt_Specificity, cv_dt_precision, cv_dt_f1)
+
+#visualise measure results violin plot 
+ggplot(cv_dt_scores, aes(x = ind, y = value))  + 
+  geom_violin(trim=FALSE) + 
+  stat_summary(fun.data=mean_sdl) + 
+  theme_minimal() + 
+  geom_boxplot(width=0.1)+
+  
+  labs(title = "Decision Tree Cross-Validation Results",
+              subtitle = "Cross Validation 10 folds ",
+              x = "Performance Measures", y = "Value",
+  )
+
+paste0("Decision Tree CV Sensitivty score = ", round(mean(cv_dt_Sensitivity$value)*100,2),"%")
+paste0("Decision Tree CV Specificity score = ", round(mean(cv_dt_Specificity$value)*100,2),"%")
+paste0("Decision Tree CV Precision score = ", round(mean(cv_dt_precision$value)*100,2),"%")
+paste0("Decision Tree CV F1 score = ", round(mean(cv_dt_f1$value)*100,2),"%")
+```
+
+# Random Forest
+
+```{r random forest, warning = FALSE}
+# Split target from response
+x = train[,-1]
+y = train[,1]
+
+x_fs = train_fs[,-1]
+y_fs = train_fs[,1]
+
+x_up = data_balanced_over[,-1]
+y_up = data_balanced_over[,1]
+
+x_down = data_balanced_under[,-1]
+y_down = data_balanced_under[,1]
+
+x_rose = data_balanced_rose[,-1]
+y_rose = data_balanced_rose[,1]
+
+x_smote = data_balanced_smote[,-1]
+y_smote = data_balanced_smote[,1]
+
+# Fit models 
+rf_fit <- Rborist(x, y)
+rf_fit_fs <- Rborist(x_fs, y_fs)
+rf_fit_up <- Rborist(x_up, y_up)
+rf_fit_down <- Rborist(x_down, y_down)
+rf_fit_rose <- Rborist(x_rose, y_rose)
+rf_fit_smote <- Rborist(x_smote, y_smote)
+
+# Predict test 
+rf_pred <- predict(rf_fit, test[,-1], ctgCensus = "prob")
+rf_pred_fs <- predict(rf_fit_fs, test_fs[,-1], ctgCensus = "prob")
+rf_pred_up <- predict(rf_fit_up, test[,-1], ctgCensus = "prob")
+rf_pred_down <- predict(rf_fit_down, test[,-1], ctgCensus = "prob")
+rf_pred_rose <- predict(rf_fit_rose, test[,-1], ctgCensus = "prob")
+rf_pred_smote <- predict(rf_fit_smote, test[,-1], ctgCensus = "prob")
+
+prob <- rf_pred$prob
+prob_fs <- rf_pred_fs$prob
+prob_up <- rf_pred_up$prob
+prob_down <- rf_pred_down$prob
+prob_rose <- rf_pred_rose$prob
+prob_smote <- rf_pred_smote$prob
+
+#auc
+roc.curve(test$HeartDiseaseorAttack, prob[,2], plotit = FALSE)$auc
+roc.curve(test_fs$HeartDiseaseorAttack, prob_fs[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, prob_up[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, prob_down[,2], plotit = FALSE, quiet = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, prob_rose[,2], plotit = FALSE)$auc
+roc.curve(test$HeartDiseaseorAttack, prob_smote[,2], plotit = FALSE)$auc                                                                                                                                                                                                      
+
+#visualise AUC 
+{par(pty = "m") 
+    roc(test$HeartDiseaseorAttack, prob[,2], plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+    plot.roc(test_fs$HeartDiseaseorAttack, prob_fs[,2], percent = TRUE, col = 'green', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, prob_up[,2], percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, prob_down[,2], percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, prob_rose[,2], percent = TRUE,  col = 'purple', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, prob_smote[,2], percent = TRUE,  col = 'orange', lwd = 1, add = TRUE)
+    legend("bottomright", legend =c("rf/baseline", "rf/featureSelection", "rf/oversampling", "rf/undersampling", "rf/ROSE", "rf/SMOTE"), col = c('red','green','blue','black','purple', 'orange'), lwd = 1)}
+```
+
+Random forest has better performance than decision tree and logistic
+regression with undersamping scoring AUC 82.9%, followed by oversamping
+82.7%
+
+``` {r random forest visualisation}
+data.frame(rf_fit_down$signature$predMap,fix.empty.names = FALSE)
+```
+
+```{r rf undersamping confusion matrix, warning = FALSE}
+confusionMatrix(table(rf_pred_down$yPred, test[,1]), positive = '1')
+```
+
+### random forest with hyperparameter
+``` {r rf hyperpara}
+x_down = data_balanced_under[,-1]
+y_down = data_balanced_under[,1]
+
+rf.control <- trainControl(method = 'cv', number = 5, p = 0.8)
+rf.grid <- expand.grid(minNode = c(1,5), 
+                       predFixed = c(10,15,25,35,50))
+
+rf_train_down <- train(x_down, 
+                       y_down, 
+                       method='Rborist', 
+                       trControl = rf.control, 
+                       tuneGrid = rf.grid, 
+                       nSamp = 50000)
+
+ggplot(rf_train_down)
+
+rf_train_down$bestTune
+
+rf_pred_down.hp <- predict(rf_train_down, test[,-1], ctgCensus = "prob")
+
+confusionMatrix(rf_pred_down.hp, test[,1], positive = "1")
+
+```
+
+```{r rf CV best fit tree paramaters, warning = FALSE}
+set.seed(5003)
+rf_fold <- createFolds(data_balanced_under[["HeartDiseaseorAttack"]], k = 10)
+
+#create a function to split 
+splitterFunc <- function(x, data, n = nrow(data)){
+  group = factor(ifelse(seq(n) %in% x, "Test", "Training"))
+  split(data, group)
+}
+
+
+X_train <- lapply(rf_fold, splitterFunc, data = data_balanced_under, n = nrow(data_balanced_under))
+
+# build rf model 
+rf.Fun <- function(x, label.name = "HeartDiseaseorAttack"){
+  x_down = x$Training[,-1]
+  y_down = x$Training[,1]
+  cv_fit_rf <- Rborist(x_down, 
+                       y_down, 
+                       predFixed = rf_train_down$bestTune$predFixed, 
+                       minNode = rf_train_down$bestTune$minNode
+                       )
+  rf_pred_down <- predict(cv_fit_rf, x$Test[,-1], ctgCensus = "prob")
+  predictions <- rf_pred_down$yPred
+  actuals <- x$Test[[label.name]]
+  list(predictions = predictions, actuals = actuals)
+}
+
+rf.cv.results <- lapply(X_train, rf.Fun)
+
+#cv confusion matrix 
+ConfMatrix <- lapply(rf.cv.results, function(x) confusionMatrix(x$predictions, x$actuals, positive = "1"))
+
+#extracting TPP & TNP 
+cv_rf_Sensitivity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Sensitivity"]], numeric(1))
+cv_rf_Specificity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Specificity"]], numeric(1))
+cv_rf_precision <- vapply(ConfMatrix, function(x) x[["byClass"]][["Precision"]], numeric(1))
+cv_rf_f1 <- vapply(ConfMatrix, function(x) x[["byClass"]][["F1"]], numeric(1))
+
+cv_rf_Sensitivity <- data.frame( value = cv_rf_Sensitivity, ind = 'Sensitivity') #combine cv-scores 
+cv_rf_Specificity <- data.frame( value = cv_rf_Specificity, ind = 'Specificty') #combine cv-scores 
+cv_rf_precision <- data.frame( value = cv_rf_precision, ind = 'Precision') #combine cv-scores 
+cv_rf_f1 <- data.frame( value = cv_rf_f1, ind = 'F1') #combine cv-scores 
+cv_rf_scores  <- rbind(cv_rf_Sensitivity, cv_rf_Specificity, cv_rf_precision, cv_rf_f1)
+
+#visualise measure results violin plot 
+ggplot(cv_rf_scores, aes(x = ind, y = value))  + 
+  geom_violin(trim=FALSE) + 
+  stat_summary(fun.data=mean_sdl) + 
+  theme_minimal() + 
+  geom_boxplot(width=0.1)+ 
+  labs(title = "Random Forest Cross-Validation Results",
+              subtitle = "Cross Validation 10 folds ",
+              x = "Performance Measures", y = "Value",
+  )
+
+
+paste0("Decision Tree CV Sensitivty score = ", round(mean(cv_rf_Sensitivity$value)*100,2),"%")
+paste0("Decision Tree CV Specificity score = ", round(mean(cv_rf_Specificity$value)*100,2),"%")
+paste0("Decision Tree CV Precision score = ", round(mean(cv_rf_precision$value)*100,2),"%")
+paste0("Decision Tree CV F1 score = ", round(mean(cv_rf_f1$value)*100,2),"%")
+```
+
+random forest using best fit parameters
+
+# XGBoost
+``` {r hyperparameter xgboost}
+
+################################
+## commenting this section as it takes too long to run 
+## xgb_fit_smote_hp$bestTune 
+## nrounds = 300,
+## max_depth = 1,
+## eta = 0.3,
+## gamma = 0,
+## colsample_bytree = 0.25,
+## min_child_weight = 0.75,
+## subsample = 0.25,
+###############################
+
+# xgb_grid_tune <- expand.grid(
+#   nrounds = c(300, 500), #number of treest
+#   max_depth = c(2,4,6), # depth of the trees 
+#   eta = c(0,.025,.05,.1,.3), #learning rate
+#   gamma = c(0,0.05,0.1,0.5,0.7,0.9,1.0), #pruning 
+#   colsample_bytree = c(0.1, 0.25,0.5), #subsample ratio of columns within a tree 
+#   min_child_weight = c(0.1,0.5,0.75), # 
+#   subsample = c(0.1,0.25)
+#   )
+# 
+# xgb_train_contro <- trainControl(method = "cv", 
+#                                  number = 3, 
+#                                  verboseIter = TRUE,
+#                                  allowParallel = TRUE)
+# 
+# xgb_fit_smote_hp <- train(x = data_balanced_under[,-1], 
+#                           y = as.factor(y_down), 
+#                           trConrol = xgb_train_contro, 
+#                           tuneGrid = xgb_grid_tune,
+#                           method = "xgbTree", 
+#                           verbose = TRUE)
+# 
+# xgb_fit_smote_hp$bestTune
+```
+
+```{r XGBoost, warning = FALSE}
+# Prep
+y = as.numeric(train$HeartDiseaseorAttack)-1
+y_fs = as.numeric(train_fs$HeartDiseaseorAttack)-1
+y_up = as.numeric(data_balanced_over$HeartDiseaseorAttack)-1
+y_down = as.numeric(data_balanced_under$HeartDiseaseorAttack)-1
+y_rose = as.numeric(data_balanced_rose$HeartDiseaseorAttack)-1
+y_smote = as.numeric(data_balanced_smote$HeartDiseaseorAttack)-1
+# 
+# #model 
+# xgb_fit <- xgboost(data = data.matrix(train[,-1]), 
+#  label = y,
+#  eta = 0.1,
+#  gamma = 0.1,
+#  max_depth = 10, 
+#  nrounds = 300, 
+#  objective = "binary:logistic",
+#  colsample_bytree = 0.6,
+#  verbose = 0,
+#  nthread = 7,
+# )
+# 
+# xgb_fit_up <- xgboost(data = data.matrix(data_balanced_over[,-1]), 
+#  label = y_up,
+#  eta = 0.1,
+#  gamma = 0.1,
+#  max_depth = 10, 
+#  nrounds = 300, 
+#  objective = "binary:logistic",
+#  colsample_bytree = 0.6,
+#  verbose = 0,
+#  nthread = 7,
+# )
+# 
+# xgb_fit_down <- xgboost(data = data.matrix(data_balanced_under[,-1]), 
+#  label = y_down,
+#  eta = 0.1,
+#  gamma = 0.1,
+#  max_depth = 10, 
+#  nrounds = 300, 
+#  objective = "binary:logistic",
+#  colsample_bytree = 0.6,
+#  verbose = 0,
+#  nthread = 7,
+# )
+# 
+# xgb_fit_rose <- xgboost(data = data.matrix(data_balanced_rose[,-1]), 
+#  label = y_rose,
+#  eta = 0.1,
+#  gamma = 0.1,
+#  max_depth = 10, 
+#  nrounds = 300, 
+#  objective = "binary:logistic",
+#  colsample_bytree = 0.6,
+#  verbose = 0,
+#  nthread = 7,
+# )
+# 
+# xgb_fit_smote <- xgboost(data = data.matrix(data_balanced_smote[,-1]), 
+#  label = y_smote,
+#  eta = 0.1,
+#  gamma = 0.1,
+#  max_depth = 10, 
+#  nrounds = 300, 
+#  objective = "binary:logistic",
+#  colsample_bytree = 0.6,
+#  verbose = 0,
+#  nthread = 7,
+# )
+
+# Model
+xgb_fit <- xgboost(data = data.matrix(train[,-1]),
+ label = y,
+  nrounds = 300,
+  max_depth = 1,
+  eta = 0.3,
+  gamma = 0,
+  colsample_bytree = 0.25,
+  min_child_weight = 0.75,
+  objective = "binary:logitraw",
+  subsample = 0.25)
+
+xgb_fit_fs <- xgboost(data = data.matrix(train_fs[,-1]), 
+ label = y_fs,
+  nrounds = 300,
+  max_depth = 1,
+  eta = 0.3,
+  gamma = 0,
+  colsample_bytree = 0.25,
+  min_child_weight = 0.75,
+  objective = "binary:logitraw",
+  subsample = 0.25)
+
+xgb_fit_up <- xgboost(data = data.matrix(data_balanced_over[,-1]),
+ label = y_up,
+  nrounds = 300,
+  max_depth = 1,
+  eta = 0.3,
+  gamma = 0,
+  colsample_bytree = 0.25,
+  min_child_weight = 0.75,
+  objective = "binary:logitraw",
+  subsample = 0.25)
+
+xgb_fit_down <- xgboost(data = data.matrix(data_balanced_under[,-1]),
+                      label = y_down,  
+                       nrounds = 300,
+                       max_depth = 3,
+                       eta = 0.3,
+                       gamma = 0,
+                       colsample_bytree = 1,
+                       min_child_weight = 1,
+                       objective = "binary:logitraw",
+                       subsample = 1)
+
+xgb_fit_rose <- xgboost(data = data.matrix(data_balanced_rose[,-1]),
+                         label = y_rose,
+                         nrounds = 300,
+                         max_depth = 1,
+                         eta = 0.3,
+                         gamma = 0,
+                         colsample_bytree = 0.25,
+                         min_child_weight = 0.75,
+                         objective = "binary:logitraw",
+                         subsample = 0.25)
+
+xgb_fit_smote <- xgboost(data = data.matrix(data_balanced_smote[,-1]),
+                         label = y_smote,
+                         nrounds = 300,
+                         max_depth = 1,
+                         eta = 0.3,
+                         gamma = 0,
+                         colsample_bytree = 0.25,
+                         min_child_weight = 0.75,
+                         objective = "binary:logitraw",
+                         subsample = 0.25)
+
+# Predict 
+xgb_pred <- predict(xgb_fit, data.matrix(test[,-1]))
+xgb_pred_fs <- predict(xgb_fit_fs, data.matrix(test_fs[,-1]))
+xgb_pred_up <- predict(xgb_fit_up, data.matrix(test[,-1]))
+xgb_pred_down <- predict(xgb_fit_down, data.matrix(test[,-1]))
+xgb_pred_rose <- predict(xgb_fit_rose, data.matrix(test[,-1]))
+xgb_pred_smote <- predict(xgb_fit_smote, data.matrix(test[,-1]))
+
+# AUC 
+roc.curve(test$HeartDiseaseorAttack, xgb_pred, plotit = FALSE)
+roc.curve(test_fs$HeartDiseaseorAttack, xgb_pred_fs, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, xgb_pred_up, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, xgb_pred_down, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, xgb_pred_rose, plotit = FALSE)
+roc.curve(test$HeartDiseaseorAttack, xgb_pred_smote, plotit = FALSE)
+
+
+# Plot AUC
+{par(pty = "m") 
+    roc(test$HeartDiseaseorAttack, xgb_pred, plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+    plot.roc(test_fs$HeartDiseaseorAttack, xgb_pred_fs, percent = TRUE, col = 'green', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, xgb_pred_up, percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, xgb_pred_down, percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, xgb_pred_down, percent = TRUE,  col = 'purple', lwd = 1, add = TRUE)
+    plot.roc(test$HeartDiseaseorAttack, xgb_pred_smote, percent = TRUE,  col = 'orange', lwd = 1, add = TRUE)
+    legend("bottomright", legend =c("xgb/baseline", "xgb/featureSelection", "xgb/oversampling", "xgb/undersampling", "xgb/ROSE"), col = c('red','green','blue','black','purple', 'orange'), lwd = 1)}
+```
+
+XGBoost with undersampling 84.5%
+
+
+```{r confusion matrix standard XGBoost, warning = FALSE}
+xgb.roc.info <- roc(test$HeartDiseaseorAttack, xgb_pred_down, legacy.axes=TRUE)
+
+#choose the best cutoff point 
+xgb.roc.df <- data.frame( 
+  tpp = xgb.roc.info$sensitivities , 
+  fpp = (1-xgb.roc.info$specificities), 
+  thresholds = xgb.roc.info$thresholds
+  )
+
+# 77% threshold 
+xgb.cutoff <- min(xgb.roc.df[xgb.roc.df$tpp < 0.83 ,"thresholds"])
+predicted <- as.factor(ifelse(xgb_pred_down > xgb.cutoff, 1, 0))
+confusionMatrix(data =predicted, reference = test$HeartDiseaseorAttack, positive = "1")
+
+# visualise 
+xgb.roc.coords <- coords(roc(test$HeartDiseaseorAttack, xgb_pred_down), "all")
+
+ggplot(xgb.roc.coords, aes(.data[["threshold"]])) + 
+  geom_line(aes(y = .data[['specificity']], colour = "Specificity")) + 
+  geom_line(aes(y = .data[['sensitivity']], colour = "Sensitivity")) +
+  labs(title = "xgb Specificity vs Sensitivity",
+              x = "Cutoff", 
+              y = "Sensitivity/Specificity"
+       ) + 
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 1))+ 
+  geom_vline(xintercept =xgb.cutoff, linetype="dashed", 
+                color = "black", size=0.5)+
+  scale_color_manual(name = "", values = c( Specificity = "#F8766D", Sensitivity = "#00BFC4", Cutoff = 'black')) +
+  
+  ## change plot appearance
+  theme_minimal()
+
+#fit model using cutoff point
+xgb_fit_down <- xgboost(data = data.matrix(data_balanced_under[,-1]),
+                      label = y_down,  
+                       nrounds = 300,
+                       max_depth = 3,
+                       eta = 0.3,
+                       gamma = 0,
+                       colsample_bytree = 1,
+                       min_child_weight = 1,
+                       objective = "binary:logitraw",
+                       subsample = 1)
+
+xgb_pred_down <- predict(xgb_fit_down, data.matrix(test[,-1]), ctgCensus = "prob")
+predictions <- as.factor(ifelse(xgb_pred_down > xgb.cutoff, 1, 0))
+actuals <- test[[1]]
+confusionMatrix(predictions, actuals, positive = "1")
+xgb.conf.matrix <- as.data.frame(cbind(as.factor(predictions), as.factor(actuals)))-1
+
+## xGBoost features importance 
+shap.plot.summary.wrap1(xgb_fit_down, X = as.matrix(test[,-1]), top_n = 10, dilute = 10)
+
+# Plot confusion matrix
+plot_confusion_matrix(evaluate(data = xgb.conf.matrix,
+                               target_col = "V2",
+                               prediction_cols = "V1",
+                               type = "binomial")[["Confusion Matrix"]][[1]])
+
+
+# confusion matrix summary
+confusionMatrix(predictions, actuals, positive = "1")
+
+# 
+# 
+# #choose the best cutoff point
+# roc.df <- data.frame(
+#   tpp = roc.info$sensitivities ,
+#   fpp = (1-roc.info$specificities),
+#   thresholds = roc.info$thresholds
+#   )
+# 
+# # 80% threshold
+# XGBoost.cutoff <- 1-max(roc.df[roc.df$tpp > 0.5 ,]$thresholds)
+# predicted <- as.factor(ifelse(xgb_pred > XGBoost.cutoff, 1, 0))
+# confusionMatrix(data =predicted, reference = test$HeartDiseaseorAttack, positive = '1')
+```
+
+``` {r xGBoost cross validation}
+
+set.seed(5003)
+xgboost_fold <- createFolds(data_balanced_under[["HeartDiseaseorAttack"]], k = 10)
+
+#create a function to split 
+splitterFunc <- function(x, data, n = nrow(data)){
+  group = factor(ifelse(seq(n) %in% x, "Test", "Training"))
+  split(data, group)
+}
+
+X_train <- lapply(xgboost_fold, splitterFunc, data = data_balanced_under, n = nrow(data_balanced_under))
+
+# build xgb model 
+xgb.Fun <- function(x, label.name = "HeartDiseaseorAttack"){
+  x_down =  data.matrix(x$Training[,-1])
+  y_down = as.numeric(x$Training$HeartDiseaseorAttack)-1
+  cv_fit_xgb <- xgboost(data = x_down, 
+                       label = y_down, 
+                       nrounds = 300,
+                       max_depth = 3,
+                       eta = 0.3,
+                       gamma = 0,
+                       colsample_bytree = 1,
+                       min_child_weight = 1,
+                       objective = "binary:logitraw",
+                       subsample = 1)
+  
+  xgb_pred_down <- predict(cv_fit_xgb, data.matrix(x$Test[,-1]), ctgCensus = "prob")
+  predictions <- as.factor(ifelse(xgb_pred_down > xgb.cutoff, 1, 0))
+  actuals <- x$Test[[label.name]]
+  list(predictions = predictions, actuals = actuals)
+}
+
+xgb.cv.results <- lapply(X_train, xgb.Fun)
+
+#cv confusion matrix 
+ConfMatrix <- lapply(xgb.cv.results, function(x) confusionMatrix(x$predictions, x$actuals, positive = "1"))
+
+#extracting TPP & TNP 
+cv_xgb_Sensitivity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Sensitivity"]], numeric(1))
+cv_xgb_Specificity <- vapply(ConfMatrix, function(x) x[["byClass"]][["Specificity"]], numeric(1))
+cv_xgb_Precision <- vapply(ConfMatrix, function(x) x[["byClass"]][["Precision"]], numeric(1))
+cv_xgb_f1 <- vapply(ConfMatrix, function(x) x[["byClass"]][["F1"]], numeric(1))
+
+
+cv_xgb_Sensitivity <- data.frame( value = cv_xgb_Sensitivity, ind = 'Sensitivity') #combine cv-scores 
+cv_xgb_Specificity <- data.frame( value = cv_xgb_Specificity, ind = 'Specificty') #combine cv-scores 
+cv_xgb_Precision <- data.frame( value = cv_xgb_Precision, ind = 'Precision') #combine cv-scores 
+cv_xgb_f1 <- data.frame( value = cv_xgb_f1, ind = 'F1') #combine cv-scores 
+
+cv_xgb_scores  <- rbind(cv_xgb_Sensitivity, cv_xgb_Specificity, cv_xgb_Precision, cv_xgb_f1)
+
+#visualise measure results violin plot 
+ggplot(cv_xgb_scores, aes(x = ind, y = value))  + 
+  geom_violin(trim=FALSE) + 
+  stat_summary(fun.data=mean_sdl) + 
+  theme_minimal() + 
+  geom_boxplot(width=0.1)+ 
+  labs(title = "xGBoost Cross-Validation Results",
+              subtitle = "Cross Validation 10 folds ",
+              x = "Performance Measures", y = "Value",
+  ) 
+
+paste0("GLM CV Sensitivty score =   ", round(mean(cv_xgb_Sensitivity$value)*100,2),"%    ")
+paste0("GLM CV Specificity score =  ", round(mean(cv_xgb_Specificity$value)*100,2),"%    ")
+paste0("GLM CV Precision score =    ", round(mean(cv_xgb_Precision$value)*100,2),"%      ")
+paste0("GLM CV F1 score =           ", round(mean(cv_xgb_f1$value)*100,2),"%             ")
+```
+
+# Compare all models
+
+```{r compare ROC, warning = FALSE}
+# par(pty = "m") 
+# roc(test$HeartDiseaseorAttack, xgb_pred_down, plot=TRUE, legacy.axes = TRUE, percent = TRUE, xlab = "False Positive", ylab= "True Positive", col = 'red', lwd = 1)
+# 
+# plot.roc(test$HeartDiseaseorAttack, prob_down[,2], percent = TRUE, col = 'blue', lwd = 1, add = TRUE)
+# 
+# plot.roc(test$HeartDiseaseorAttack, pred_dt_down[,2], percent = TRUE, col = 'black', lwd = 1, add = TRUE)
+# 
+# plot.roc(test$HeartDiseaseorAttack, pred_glm_down, percent = TRUE,  col = 'purple', lwd = 1, lty = 2, add = TRUE)
+# 
+# legend("bottomright", legend =c("XGBoost", "RandomForst", "Decision Tree", "Logisitc Regression"), col = c('red','blue','black','purple'), lwd = 1)
+```
+
+Logistic regression combined with oversampling has the best ROC/AUC
+score.
+
+# End.
